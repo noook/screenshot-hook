@@ -13,11 +13,13 @@ import (
 	"github.com/atotto/clipboard"
 	scp "github.com/bramvdbogaerde/go-scp"
 	"github.com/bramvdbogaerde/go-scp/auth"
+	"github.com/joho/godotenv"
 	"golang.org/x/crypto/ssh"
 )
 
 var _ io.Reader = (*os.File)(nil)
 var chars = generatePossibleChars()
+var env = loadEnvVars()
 
 func main() {
 	var id string
@@ -25,8 +27,29 @@ func main() {
 	go getIdentifier(finished, &id)
 	tempname := doScreenshot()
 	<-finished
+	_ = clipboard.WriteAll(fmt.Sprintf(env["CLIPBOARD_URL_ROOT"]+"%s.png", id))
 	upload(tempname, id)
 	deleteTempFile(tempname)
+}
+
+func loadEnvVars() (env map[string]string) {
+	var err error
+	env, err = godotenv.Read(os.Getenv("HOME") + "/.screenshotrc")
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	var fieldsToTreat = map[string]bool{"REMOTE_FILE_PATH": true, "CLIPBOARD_URL_ROOT": true}
+	for key, value := range env {
+		_, yes := fieldsToTreat[key]
+		if yes {
+			if value[len(value)-1:] != "/" {
+				env[key] = value + "/"
+			}
+		}
+	}
+
+	return env
 }
 
 func doScreenshot() (pathToTemp string) {
@@ -75,7 +98,7 @@ func guid() (identifier string) {
 }
 
 func isAvailable(id string) bool {
-	url := fmt.Sprintf("https://i.neilrichter.com/%s.png", id)
+	url := fmt.Sprintf(env["CLIPBOARD_URL_ROOT"]+"%s.png", id)
 	resp, err := http.Get(url)
 	if err != nil {
 		log.Fatal(err)
@@ -85,8 +108,8 @@ func isAvailable(id string) bool {
 }
 
 func upload(filename string, id string) {
-	clientConfig, _ := auth.PrivateKey("root", "/Users/neilrichter/.ssh/id_rsa", ssh.InsecureIgnoreHostKey())
-	client := scp.NewClient("i.neilrichter.com:22", &clientConfig)
+	clientConfig, _ := auth.PrivateKey(env["REMOTE_USER_LOGIN"], env["PRIVATE_KEY_PATH"], ssh.InsecureIgnoreHostKey())
+	client := scp.NewClient(env["REMOTE_HOST"]+":"+env["REMOTE_PORT"], &clientConfig)
 
 	err := client.Connect()
 	if err != nil {
@@ -97,8 +120,7 @@ func upload(filename string, id string) {
 	defer client.Close()
 
 	f := openFile(filename)
-	client.CopyFile(f, fmt.Sprintf("/var/www/i/%s.png", id), "0644")
-	_ = clipboard.WriteAll(fmt.Sprintf("https://i.neilrichter.com/%s.png", id))
+	client.CopyFile(f, fmt.Sprintf(env["REMOTE_FILE_PATH"]+"%s.png", id), "0644")
 }
 
 func openFile(path string) io.Reader {
